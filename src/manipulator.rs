@@ -1,8 +1,3 @@
-use crate::error::{Error, Result};
-use crate::memory::{error::MemoryError, error::MemoryResult, MemoryManipulation};
-use crate::process::Process;
-use sysinfo::{ProcessExt, System, SystemExt};
-
 #[cfg(target_os = "linux")]
 use {
     nix::{
@@ -14,32 +9,36 @@ use {
         io::{prelude::*, SeekFrom},
     },
 };
+use crate::error::{MemoryError, MemoryResult};
+
+pub trait MemoryManipulation {
+    fn new(pid: i32) -> Self;
+    fn pid(&self) -> i32;
+    /// Reads into the buffer at the given address and returns the bytes read
+    fn read(&self, address: usize, buf: &mut [u8]) -> MemoryResult<usize>;
+    /// Writes the payload into the memory at the given address
+    fn write(&self, address: usize, payload: &[u8]) -> MemoryResult<usize>;
+}
+
 
 /// Manipulates the process memory from the outside with system calls
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
-pub struct ExternalManipulator {
+pub struct ProcessVMManipulator {
     pub pid: i32,
 }
 
-impl ExternalManipulator {
-    /// Creates a new External Manipulator from an unchecked pid
-    pub fn new_unchecked(pid: i32) -> ExternalManipulator {
-        ExternalManipulator { pid }
-    }
-    /// Searches for the given process name and creates an external manipulator
-    pub fn new(name: &str) -> Result<ExternalManipulator> {
-        let system = System::new_all();
-        let process_list = system.get_process_by_name(name);
-        if !process_list.is_empty() {
-            let pid = process_list[0].pid();
-            return Ok(ExternalManipulator { pid });
-        }
-        Err(Error::ProcessNotFound(name.to_owned()))
-    }
-}
-
 #[cfg(target_os = "linux")]
-impl MemoryManipulation for ExternalManipulator {
+impl MemoryManipulation for ProcessVMManipulator {
+    #[inline(always)]
+    fn new(pid: i32) -> ProcessVMManipulator {
+        ProcessVMManipulator { pid }
+    }
+
+    #[inline(always)]
+    fn pid(&self) -> i32 {
+        self.pid
+    }
+
     fn read(&self, address: usize, buf: &mut [u8]) -> MemoryResult<usize> {
         let remote = [RemoteIoVec {
             base: address,
@@ -53,6 +52,7 @@ impl MemoryManipulation for ExternalManipulator {
         }
     }
     fn write(&self, address: usize, payload: &[u8]) -> MemoryResult<usize> {
+        println!("{:x}:{}",address, std::mem::size_of_val(payload));
         let remote = [RemoteIoVec {
             base: address,
             len: std::mem::size_of_val(payload),
@@ -66,33 +66,28 @@ impl MemoryManipulation for ExternalManipulator {
     }
 }
 
-impl Process for ExternalManipulator {
-    fn pid(&self) -> i32 {
-        self.pid
-    }
-}
+
 /// Manipulates the process memory from the outside with the memory mapped mem file
 #[cfg(target_os = "linux")]
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
-pub struct AnonManipulator {
+pub struct ProcManipulator {
     pub pid: i32,
 }
 
-impl AnonManipulator {
-    /// Searches for the given process name and creates an anon manipulator
-    pub fn new(name: &str) -> Result<AnonManipulator> {
-        let system = System::new_all();
-        let process_list = system.get_process_by_name(name);
-        if !process_list.is_empty() {
-            let pid = process_list[0].pid();
-            return Ok(AnonManipulator { pid });
-        }
-        Err(Error::ProcessNotFound(name.to_owned()))
-    }
-}
 
 #[cfg(target_os = "linux")]
-impl MemoryManipulation for AnonManipulator {
+impl MemoryManipulation for ProcManipulator {
+
+    #[inline(always)]
+    fn new(pid: i32) -> Self {
+        Self { pid }
+    }
+
+    #[inline(always)]
+    fn pid(&self) -> i32 {
+        self.pid
+    }
+
     fn read(&self, address: usize, buf: &mut [u8]) -> MemoryResult<usize> {
         let mut mem_file = OpenOptions::new()
             .read(true)
@@ -109,11 +104,5 @@ impl MemoryManipulation for AnonManipulator {
         mem_file.seek(SeekFrom::Start(address as u64))?;
         mem_file.write_all(payload)?;
         Ok(payload.len())
-    }
-}
-
-impl Process for AnonManipulator {
-    fn pid(&self) -> i32 {
-        self.pid
     }
 }
