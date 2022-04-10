@@ -52,7 +52,6 @@ impl MemoryManipulation for ProcessVMManipulator {
         }
     }
     fn write(&self, address: usize, payload: &[u8]) -> MemoryResult<usize> {
-        println!("{:x}:{}",address, std::mem::size_of_val(payload));
         let remote = [RemoteIoVec {
             base: address,
             len: std::mem::size_of_val(payload),
